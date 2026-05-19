@@ -101,3 +101,14 @@ export {
   type ParseResult,
   type PathDecision,
 } from "./rsl.js";
+
+// ─── Insights (opt-in anonymised telemetry, new in 0.2.0) ──────────
+//
+// Canonical import path is `@crawlertoll/core/insights`. The
+// re-export here is for convenience.
+
+export {
+  setupInsights,
+  type SetupInsightsOptions,
+  type InsightsPayload,
+} from "./insights.js";

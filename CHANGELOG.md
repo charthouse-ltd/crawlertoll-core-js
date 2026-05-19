@@ -4,6 +4,27 @@ All notable changes to `@crawlertoll/core` are documented here.
 
 The package follows [Semantic Versioning](https://semver.org/). It implements published external standards (RFC 9421, RSL 1.0, IETF draft-meunier-web-bot-auth-architecture, x402); breaking changes to those specs propagate as new major versions here.
 
+## [0.2.0] — 2026-05-20
+
+### Added
+
+- **`@crawlertoll/core/insights`** — opt-in anonymised telemetry. `setupInsights({ installId, endpoint?, sampleRate?, fetchImpl?, onError? })` returns a callback that adapters can wire into their `onDecision` hook. Posts six fields per decision (`install_id`, `operator`, `bot_name`, `action`, `category`, `verified`) to a collector endpoint, defaulting to `https://insights.crawlertoll.com/v1/ingest`. Fire-and-forget — never throws into the request, never blocks. Failures route to the optional `onError` callback. Sample-rate clamped to `[0, 1]`. Six-field payload matches the allow-list enforced by the collector (the `crawlertoll-insights` Cloudflare Worker), so adversarial inference is structurally hard.
+- Re-exported from the root: `import { setupInsights } from "@crawlertoll/core"` works alongside the canonical subpath import.
+
+### Why this matters
+
+The collector at `crawlertoll-insights` has been live since 0.1.0 of this package, but no adapter shipped emit-side code. `setupInsights` closes the loop: a publisher who opts in now has one-line wiring that POSTs the six allowed fields to the collector. The aggregated dashboard becomes useful as soon as ~100 installs opt in.
+
+### Conformance
+
+- 10 new tests in `tests/insights.test.ts`; total now 57/57.
+- ESM + CJS + DTS build clean, including the new `dist/insights.{js,cjs,d.ts}` subpath.
+- `package.json` `exports` adds `./insights` entry; `scripts.build` rebuilds the new entry.
+
+### Compatibility
+
+Non-breaking. All `0.1.0` APIs are unchanged; the only addition is the new subpath + root re-export. Adapter packages at `0.1.0` continue to work with `core@0.2.0` as a transitive dependency.
+
 ## [0.1.0] — 2026-05-19
 
 Initial release.

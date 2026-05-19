@@ -237,7 +237,7 @@ Every release passes a 47-test vitest suite:
 Run yourself:
 
 ```bash
-git clone https://github.com/nhrzxxw9dn-web/crawlertoll-core-js
+git clone https://github.com/crawlertoll/crawlertoll-core-js
 cd crawlertoll-core-js
 npm install
 npm test
@@ -259,7 +259,7 @@ npm test
 
 ## Project links
 
-- **Manifesto**: [github.com/nhrzxxw9dn-web/crawlertoll/blob/main/MANIFESTO.md](https://github.com/nhrzxxw9dn-web/crawlertoll/blob/main/MANIFESTO.md)
+- **Manifesto**: [github.com/crawlertoll/crawlertoll/blob/main/MANIFESTO.md](https://github.com/crawlertoll/crawlertoll/blob/main/MANIFESTO.md)
 - **Marketplace**: [crawlertoll.com](https://crawlertoll.com)
 - **Specs implemented**:
   - HTTP 402 (Cloudflare crawler-price headers, x402 Foundation)
