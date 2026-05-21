@@ -76,7 +76,7 @@ async function signRequest({
   targetUri: string;
   signatureAgent: string;
   components: readonly string[];
-  params: { created: number; expires: number; tag?: string };
+  params: { created: number; expires: number; tag?: string; nonce?: string };
 }): Promise<{ "signature-input": string; signature: string; "signature-agent": string }> {
   // Build canonical lines and params line.
   const lines: string[] = [];
@@ -110,7 +110,7 @@ async function signRequest({
   }
   // The params line must literally match the signature-input header
   // for that label, minus the leading `<label>=`.
-  const paramsBody = `(${components.map((c) => `"${c}"`).join(" ")});created=${params.created};expires=${params.expires};keyid="${keyid}";alg="ed25519"${params.tag ? `;tag="${params.tag}"` : ""}`;
+  const paramsBody = `(${components.map((c) => `"${c}"`).join(" ")});created=${params.created};expires=${params.expires};keyid="${keyid}";alg="ed25519"${params.tag ? `;tag="${params.tag}"` : ""}${params.nonce ? `;nonce="${params.nonce}"` : ""}`;
   lines.push(`"@signature-params": ${paramsBody}`);
   const base = TEXT.encode(lines.join("\n"));
   const sig = await ed.signAsync(base, secretKey);
@@ -302,6 +302,146 @@ describe("verifyWebBotAuth — failure paths", () => {
     );
     expect(r.valid).toBe(false);
     expect(r.reason).toBe("unsupported-alg");
+  });
+});
+
+describe("verifyWebBotAuth — replay protection (seenNonceCache)", () => {
+  it("rejects a replayed nonce on the second use", async () => {
+    const { secretKey, keyid, jwks } = await makeBot();
+    const now = Math.floor(Date.now() / 1000);
+    const headers = await signRequest({
+      secretKey,
+      keyid,
+      authority: "example.com",
+      targetUri: "/",
+      signatureAgent: '"https://bot.example/"',
+      components: ["@authority", "signature-agent"],
+      params: { created: now, expires: now + 300, tag: "web-bot-auth", nonce: "nonce-123" },
+    });
+    const seen = new Set<string>();
+    const opts = {
+      fetchImpl: fakeFetch(jwks),
+      seenNonceCache: (n: string) => {
+        if (seen.has(n)) return true;
+        seen.add(n);
+        return false;
+      },
+    };
+    const req = { method: "GET", authority: "example.com", targetUri: "/", headers };
+    const first = await verifyWebBotAuth(req, opts);
+    expect(first.valid).toBe(true);
+    const second = await verifyWebBotAuth(req, opts);
+    expect(second.valid).toBe(false);
+    expect(second.reason).toBe("replay");
+  });
+
+  it("does not consult the nonce store when the signature carries no nonce", async () => {
+    const { secretKey, keyid, jwks } = await makeBot();
+    const now = Math.floor(Date.now() / 1000);
+    const headers = await signRequest({
+      secretKey,
+      keyid,
+      authority: "example.com",
+      targetUri: "/",
+      signatureAgent: '"https://bot.example/"',
+      components: ["@authority", "signature-agent"],
+      params: { created: now, expires: now + 300, tag: "web-bot-auth" }, // no nonce
+    });
+    let called = false;
+    const r = await verifyWebBotAuth(
+      { method: "GET", authority: "example.com", targetUri: "/", headers },
+      {
+        fetchImpl: fakeFetch(jwks),
+        seenNonceCache: () => {
+          called = true;
+          return true;
+        },
+      },
+    );
+    expect(r.valid).toBe(true);
+    expect(called).toBe(false);
+  });
+
+  it("fails closed (reason: replay) when the nonce store throws", async () => {
+    const { secretKey, keyid, jwks } = await makeBot();
+    const now = Math.floor(Date.now() / 1000);
+    const headers = await signRequest({
+      secretKey,
+      keyid,
+      authority: "example.com",
+      targetUri: "/",
+      signatureAgent: '"https://bot.example/"',
+      components: ["@authority", "signature-agent"],
+      params: { created: now, expires: now + 300, tag: "web-bot-auth", nonce: "nonce-xyz" },
+    });
+    const r = await verifyWebBotAuth(
+      { method: "GET", authority: "example.com", targetUri: "/", headers },
+      {
+        fetchImpl: fakeFetch(jwks),
+        seenNonceCache: () => {
+          throw new Error("redis down");
+        },
+      },
+    );
+    expect(r.valid).toBe(false);
+    expect(r.reason).toBe("replay");
+    expect(r.detail).toContain("redis down");
+  });
+});
+
+describe("verifyWebBotAuth — jwksTtlMs", () => {
+  it("re-fetches the JWKS on every call when jwksTtlMs is 0", async () => {
+    const { secretKey, keyid, jwks } = await makeBot();
+    const now = Math.floor(Date.now() / 1000);
+    const headers = await signRequest({
+      secretKey,
+      keyid,
+      authority: "example.com",
+      targetUri: "/",
+      signatureAgent: '"https://bot.example/"',
+      components: ["@authority", "signature-agent"],
+      params: { created: now, expires: now + 300, tag: "web-bot-auth" },
+    });
+    let fetchCount = 0;
+    const countingFetch: typeof fetch = async () => {
+      fetchCount++;
+      return new Response(JSON.stringify(jwks), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+    const req = { method: "GET", authority: "example.com", targetUri: "/", headers };
+    await verifyWebBotAuth(req, { fetchImpl: countingFetch, jwksTtlMs: 0 });
+    await verifyWebBotAuth(req, { fetchImpl: countingFetch, jwksTtlMs: 0 });
+    // TTL 0 → cache entry expires immediately → both calls fetch.
+    expect(fetchCount).toBe(2);
+  });
+
+  it("serves from cache on the second call under the default TTL", async () => {
+    const { secretKey, keyid, jwks } = await makeBot();
+    const now = Math.floor(Date.now() / 1000);
+    const headers = await signRequest({
+      secretKey,
+      keyid,
+      authority: "example.com",
+      targetUri: "/",
+      signatureAgent: '"https://bot.example/"',
+      components: ["@authority", "signature-agent"],
+      params: { created: now, expires: now + 300, tag: "web-bot-auth" },
+    });
+    let fetchCount = 0;
+    const countingFetch: typeof fetch = async () => {
+      fetchCount++;
+      return new Response(JSON.stringify(jwks), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+    const req = { method: "GET", authority: "example.com", targetUri: "/", headers };
+    await verifyWebBotAuth(req, { fetchImpl: countingFetch });
+    await verifyWebBotAuth(req, { fetchImpl: countingFetch });
+    // Default 1h TTL → second call hits the cache.
+    expect(fetchCount).toBe(1);
   });
 });
 

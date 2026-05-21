@@ -70,7 +70,8 @@ export interface WbaVerifyResult {
     | "future-dated"
     | "key-not-found"
     | "bad-signature"
-    | "unsupported-alg";
+    | "unsupported-alg"
+    | "replay";
   detail?: string;
   /** Keyid that the signature claimed (filled in even on failure when known). */
   keyid?: string;
@@ -87,6 +88,39 @@ export interface VerifyOptions {
   fetchImpl?: typeof fetch;
   /** Maximum JWKS response size to accept, in bytes. Default 64 KiB. */
   maxJwksBytes?: number;
+  /**
+   * JWKS cache TTL in milliseconds. A fetched directory is cached by URL
+   * for this long before the next re-fetch. Default 1 hour (3_600_000).
+   *
+   * Lower it when bot operators rotate keys frequently: with the default,
+   * a key that was rotated out can still be served from the stale cache —
+   * and a key that was rotated *in* can be rejected — for up to the TTL.
+   */
+  jwksTtlMs?: number;
+  /**
+   * Optional replay-protection hook. After a signature cryptographically
+   * verifies, the verifier calls this with the signature's `nonce` — only
+   * if the signer included one. Implement an atomic check-and-record
+   * against your own store (Redis `SET NX`, Cloudflare/Workers KV, an
+   * in-memory LRU, …) and return `true` if the nonce has been seen before.
+   * The verifier then returns `{ valid: false, reason: "replay" }`.
+   *
+   * CrawlerToll deliberately ships no storage layer: replay state is
+   * per-deployment, and this hook is where you plug yours in.
+   *
+   * DEFAULT (hook omitted): NO replay check is performed. A captured,
+   * still-valid signature can be replayed within its `created`…`expires`
+   * window. Keep that window tight and wire this hook for full protection.
+   *
+   * Fail-open vs fail-closed is your call. If your store is briefly
+   * unreachable and you would rather serve traffic than reject it, catch
+   * inside the hook and return `false`. If the hook itself throws, the
+   * verifier fails closed (`reason: "replay"`, with the error in `detail`).
+   */
+  seenNonceCache?: (
+    nonce: string,
+    ctx: { keyid: string; signatureAgent?: string },
+  ) => boolean | Promise<boolean>;
 }
 
 export interface VerifyInput {

@@ -1,16 +1,16 @@
 {
   "name": "@crawlertoll/core",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Open-source, framework-agnostic Node middleware for the AI-crawler economy. Bot detection, Web Bot Auth (IETF draft-meunier) verification, HTTP 402 issuance (Cloudflare crawler-price spec), and RSL 1.0 robots.txt parser/generator. Vendor-neutral; ships adapters TO Cloudflare PPC, TollBit, Skyfire, and x402.",
   "license": "Apache-2.0",
   "author": "Charthouse Ltd",
   "homepage": "https://crawlertoll.com",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nhrzxxw9dn-web/crawlertoll-core-js.git"
+    "url": "git+https://github.com/charthouse-ltd/crawlertoll-core-js.git"
   },
   "bugs": {
-    "url": "https://github.com/nhrzxxw9dn-web/crawlertoll-core-js/issues"
+    "url": "https://github.com/charthouse-ltd/crawlertoll-core-js/issues"
   },
   "keywords": [
     "ai-crawler",

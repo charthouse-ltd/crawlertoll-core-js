@@ -16,7 +16,7 @@
  * Posts six anonymised fields per decision: operator, bot_name,
  * action, category, verified, and an opaque install_id UUID. No
  * URLs, no headers, no IPs, no payloads. The collector (an opt-in
- * Cloudflare Worker — see github.com/nhrzxxw9dn-web/crawlertoll-insights)
+ * Cloudflare Worker — see github.com/charthouse-ltd/crawlertoll-insights)
  * enforces an allow-list on the server side and suppresses small-N
  * buckets (k<5) before any data reaches the dashboard, so even
  * adversarial inference is structurally hard.

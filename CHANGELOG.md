@@ -4,6 +4,29 @@ All notable changes to `@crawlertoll/core` are documented here.
 
 The package follows [Semantic Versioning](https://semver.org/). It implements published external standards (RFC 9421, RSL 1.0, IETF draft-meunier-web-bot-auth-architecture, x402); breaking changes to those specs propagate as new major versions here.
 
+## [0.3.0] — 2026-05-21
+
+### Added
+
+- **Replay protection for Web Bot Auth (`options.seenNonceCache`).** `verifyWebBotAuth` now accepts an optional nonce hook. When the signer includes a `nonce` parameter and the caller wires a store, the verifier enforces single-use and returns `{ valid: false, reason: "replay" }` on reuse. CrawlerToll ships no storage layer — the hook is an atomic check-and-record the adopter implements against Redis / Workers KV / an LRU. A throwing hook fails closed (`reason: "replay"`); adopters preferring fail-open catch inside the hook and return `false`.
+- **Configurable JWKS cache TTL (`options.jwksTtlMs`).** The per-directory JWKS cache TTL, previously hardcoded to 1 hour, is now an option. Lower it for operators that rotate keys frequently so a rotated-in key is not rejected (or a rotated-out key honoured) for up to the TTL. Default unchanged (1 hour).
+- New `"replay"` value in the `WbaVerifyResult.reason` union.
+
+### Changed
+
+- Documented the **JWKS-fetch-failure policy** (fail-closed → `reason: "key-not-found"`) in the verifier doc comment and the README, with a copy-paste `fetchImpl` wrapper for stale-while-error resilience so a transient directory outage does not block legitimate signed traffic.
+- Corrected a stale doc comment in `wba/verify.ts` that referenced a non-existent `options.jwksCache`.
+- Repository URL updated to `github.com/charthouse-ltd/crawlertoll-core-js` after the GitHub org rename (`nhrzxxw9dn-web` → `charthouse-ltd`; npm scope unchanged: `@crawlertoll/*`).
+
+### Conformance
+
+- 5 new Web Bot Auth tests (replay accept→reject, no-nonce skip, throwing-store fail-closed, `jwksTtlMs: 0` re-fetch, default-TTL cache hit). Run `npm test` to confirm.
+- All additions are non-breaking: every new option is optional and defaults to prior behaviour. Adapter packages at `^0.1.0` / `^0.2.0` continue to work with `core@0.3.0` as a transitive dependency.
+
+### Security note
+
+The default (no `seenNonceCache`) performs no replay check — a captured signature is replayable within its `created`…`expires` window. This is documented in both the type and the README; production deployments that need replay resistance should wire the hook and keep signature lifetimes short.
+
 ## [0.2.0] — 2026-05-20
 
 ### Added

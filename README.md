@@ -116,7 +116,59 @@ if (result.valid) {
 }
 ```
 
-Implements `draft-meunier-web-bot-auth-architecture-05`. JWKS fetched from `https://<authority>/.well-known/http-message-signatures-directory` and cached for an hour. Ed25519 only (the only algorithm Web Bot Auth allows).
+Implements `draft-meunier-web-bot-auth-architecture-05`. JWKS fetched from `https://<authority>/.well-known/http-message-signatures-directory` and cached for an hour by default. Ed25519 only (the only algorithm Web Bot Auth allows).
+
+#### Replay protection (`seenNonceCache`)
+
+A Web Bot Auth signature is valid for its whole `created`…`expires` window. **By default the verifier performs no replay check** — a captured, still-valid signature can be replayed until it expires. To enforce single-use, wire a nonce store:
+
+```ts
+// Adapter owns the storage (Redis, Workers KV, an LRU…). The hook is an
+// atomic check-and-record that returns true if the nonce was already seen.
+const result = await verifyWebBotAuth(input, {
+  seenNonceCache: async (nonce, { keyid }) => {
+    const firstUse = await redis.set(`wba:${keyid}:${nonce}`, "1", { NX: true, EX: 600 });
+    return firstUse === null; // already present → replay
+  },
+});
+// result.reason === "replay" when a nonce is reused.
+```
+
+The hook only fires when the signer included a `nonce` parameter. CrawlerToll ships no storage — replay state is per-deployment. If the hook throws, the verifier **fails closed** (`reason: "replay"`); callers who prefer fail-open should catch inside the hook and return `false`.
+
+#### Key rotation (`jwksTtlMs`)
+
+JWKS responses are cached per directory URL for one hour by default. If bot operators rotate keys frequently, lower the TTL so a rotated-in key isn't rejected (or a rotated-out key honoured) for up to an hour:
+
+```ts
+await verifyWebBotAuth(input, { jwksTtlMs: 5 * 60_000 }); // 5-minute cache
+```
+
+`clearJwksCache(url?)` flushes the cache immediately (useful in tests and on a known rotation).
+
+#### JWKS fetch failures
+
+If a bot's directory is unreachable, returns a non-2xx, is malformed, or exceeds `maxJwksBytes`, the verifier **fails closed**: it returns `reason: "key-not-found"` and the request is treated as unverified. That is the safe default, but it means a transient outage of a bot operator's directory can cause otherwise-legitimate signed traffic to be rejected (and, if your policy blocks unverified bots, blocked).
+
+To stay available during a transient directory outage, wrap `fetchImpl` to serve a last-known-good JWKS (stale-while-error):
+
+```ts
+let lastGood: Response | null = null;
+const resilientFetch: typeof fetch = async (url, init) => {
+  try {
+    const res = await fetch(url, init);
+    if (res.ok) { lastGood = res.clone(); return res; }
+    if (lastGood) return lastGood.clone();   // serve stale on non-2xx
+    return res;
+  } catch (err) {
+    if (lastGood) return lastGood.clone();    // serve stale on network error
+    throw err;
+  }
+};
+await verifyWebBotAuth(input, { fetchImpl: resilientFetch });
+```
+
+Alternatively, pre-warm and pin the JWKS for high-volume operators out of band. Treat "JWKS unreachable" as an operational signal, not just a per-request failure.
 
 ### HTTP 402
 
@@ -237,7 +289,7 @@ Every release passes a 47-test vitest suite:
 Run yourself:
 
 ```bash
-git clone https://github.com/nhrzxxw9dn-web/crawlertoll-core-js
+git clone https://github.com/charthouse-ltd/crawlertoll-core-js
 cd crawlertoll-core-js
 npm install
 npm test
@@ -259,7 +311,7 @@ npm test
 
 ## Project links
 
-- **Manifesto**: [github.com/nhrzxxw9dn-web/crawlertoll/blob/main/MANIFESTO.md](https://github.com/nhrzxxw9dn-web/crawlertoll/blob/main/MANIFESTO.md)
+- **Manifesto**: [github.com/charthouse-ltd/crawlertoll/blob/main/MANIFESTO.md](https://github.com/charthouse-ltd/crawlertoll/blob/main/MANIFESTO.md)
 - **Marketplace**: [crawlertoll.com](https://crawlertoll.com)
 - **Specs implemented**:
   - HTTP 402 (Cloudflare crawler-price headers, x402 Foundation)
@@ -270,3 +322,7 @@ npm test
 ## License
 
 [Apache-2.0](./LICENSE). All specs implemented are open standards under their own licenses (RFC 9421, RSL 1.0, x402, IETF draft-meunier).
+
+## Trademark
+
+CrawlerToll™ is a trademark of Charthouse Ltd.

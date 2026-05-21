@@ -10,8 +10,20 @@
  * rather than throwing, so middleware can log/route without try/catch
  * boilerplate.
  *
- * Caches JWKS by directory URL for the lifetime of the process; the
- * cache TTL defaults to 1 hour. Override via `options.jwksCache`.
+ * Caches JWKS by directory URL for the process lifetime; the cache TTL
+ * defaults to 1 hour and is configurable via `options.jwksTtlMs`. Lower
+ * it when bot operators rotate keys frequently.
+ *
+ * JWKS-fetch-failure policy (fail-closed by default): if the directory is
+ * unreachable, returns a non-2xx, is oversized, or is malformed, the
+ * fetch throws and verification fails with `reason: "key-not-found"` —
+ * i.e. the request is treated as unverified. To avoid blocking legitimate
+ * signed traffic during a transient directory outage, wrap
+ * `options.fetchImpl` to serve a last-known-good JWKS (stale-while-error)
+ * or pre-warm and pin keys out of band. See README → "JWKS fetch failures".
+ *
+ * Replay protection is opt-in via `options.seenNonceCache`. With no hook,
+ * a still-valid signature is replayable within its created…expires window.
  */
 
 import * as ed from "@noble/ed25519";
@@ -217,6 +229,44 @@ export async function verifyWebBotAuth(
     };
   }
 
+  // ─── Replay protection (opt-in) ─────────────────────────────────
+  // The signature is cryptographically valid. If the caller wired a
+  // nonce store and the signer included a nonce, enforce single-use.
+  // With no store, no replay check happens (documented default) — a
+  // captured signature remains replayable within its created…expires
+  // window.
+  const nonce = chosen.params.nonce;
+  if (options.seenNonceCache && nonce) {
+    const keyid = chosen.params.keyid!; // guaranteed present (checked above)
+    let seen: boolean;
+    try {
+      seen = await options.seenNonceCache(nonce, {
+        keyid,
+        ...(sigAgent ? { signatureAgent: sigAgent } : {}),
+      });
+    } catch (err) {
+      // Fail closed: a throwing nonce store must not silently disable
+      // replay protection. Callers preferring fail-open should catch
+      // inside the hook and return false.
+      return {
+        valid: false,
+        reason: "replay",
+        detail: `nonce store threw: ${(err as Error).message}`,
+        keyid,
+        ...(sigAgent ? { signatureAgent: sigAgent } : {}),
+      };
+    }
+    if (seen) {
+      return {
+        valid: false,
+        reason: "replay",
+        detail: `nonce already seen (replay): ${nonce}`,
+        keyid,
+        ...(sigAgent ? { signatureAgent: sigAgent } : {}),
+      };
+    }
+  }
+
   return {
     valid: true,
     keyid: chosen.params.keyid,
@@ -287,7 +337,7 @@ async function fetchJwks(url: string, options: VerifyOptions): Promise<WbaJwks> 
   }
   globalJwksCache.set(url, {
     jwks,
-    expiresAt: now + DEFAULT_JWKS_TTL_MS,
+    expiresAt: now + (options.jwksTtlMs ?? DEFAULT_JWKS_TTL_MS),
   });
   return jwks;
 }
